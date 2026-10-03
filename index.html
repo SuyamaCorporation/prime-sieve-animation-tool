@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sieve of Eratosthenes Animator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f172a; }
+  .cell {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; border-radius: 4px;
+    transition: background 0.2s, transform 0.1s;
+    min-width: 0;
+    aspect-ratio: 1;
+  }
+  .cell-prime { background: #d97706; color: #fff; }
+  .cell-composite { background: #334155; color: #64748b; }
+  .cell-neutral { background: #1e293b; color: #475569; }
+  .cell-active { background: #ef4444; color: #fff; transform: scale(1.2); }
+  .cell-flash { background: #f97316; color: #fff; }
+  .cell-unseen { background: #1e3a5f; color: #93c5fd; }
+</style>
+</head>
+<body class="text-slate-200 min-h-screen p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl font-bold text-center mb-4 text-amber-400">Sieve of Eratosthenes Animator</h1>
+
+  <!-- Controls -->
+  <div class="flex flex-wrap gap-3 justify-center mb-4 bg-slate-800 rounded-xl p-3">
+    <div class="flex items-center gap-2">
+      <label for="limitInput" class="text-sm text-slate-300">N (max 500):</label>
+      <input id="limitInput" type="number" value="100" min="10" max="500"
+        class="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm"
+        aria-label="Upper limit N">
+      <button onclick="initSieve()" class="bg-amber-700 hover:bg-amber-600 text-sm rounded px-3 py-1.5 transition">Set N</button>
+    </div>
+    <div class="flex items-center gap-2">
+      <label class="text-sm text-slate-300" for="speedSelect">Speed:</label>
+      <select id="speedSelect" class="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" aria-label="Animation speed">
+        <option value="800">Slow</option>
+        <option value="200" selected>Medium</option>
+        <option value="50">Fast</option>
+      </select>
+    </div>
+    <button id="playBtn" onclick="togglePlay()" class="bg-green-700 hover:bg-green-600 text-sm rounded-lg px-4 py-1.5 transition">Play</button>
+    <button onclick="stepSieve()" class="bg-slate-700 hover:bg-slate-600 text-sm rounded-lg px-4 py-1.5 transition">Step</button>
+    <button onclick="initSieve()" class="bg-red-900 hover:bg-red-700 text-sm rounded-lg px-4 py-1.5 transition">Reset</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+    <div class="bg-slate-800 rounded-lg p-2 text-center">
+      <div class="text-xs text-slate-400">Current Prime</div>
+      <div id="currentPrime" class="text-xl font-bold text-amber-400 font-mono">—</div>
+    </div>
+    <div class="bg-slate-800 rounded-lg p-2 text-center">
+      <div class="text-xs text-slate-400">Primes Found</div>
+      <div id="primeCount" class="text-xl font-bold text-green-400 font-mono">0</div>
+    </div>
+    <div class="bg-slate-800 rounded-lg p-2 text-center">
+      <div class="text-xs text-slate-400">Density</div>
+      <div id="density" class="text-xl font-bold text-blue-400 font-mono">0%</div>
+    </div>
+    <div class="bg-slate-800 rounded-lg p-2 text-center">
+      <div class="text-xs text-slate-400">Largest Gap</div>
+      <div id="largestGap" class="text-xl font-bold text-purple-400 font-mono">—</div>
+    </div>
+  </div>
+
+  <!-- Grid -->
+  <div id="grid" class="mb-4 p-2 bg-slate-900 rounded-xl overflow-auto" style="max-height:320px"></div>
+
+  <!-- Fun Facts -->
+  <div id="funFacts" class="mb-4 min-h-10 text-sm text-slate-300 bg-slate-800 rounded-xl p-3 space-y-1"></div>
+
+  <!-- Bar Chart -->
+  <div class="bg-slate-800 rounded-xl p-4">
+    <h2 class="text-sm font-semibold text-slate-300 mb-3">Prime Count per Decade</h2>
+    <div id="barChart" class="flex items-end gap-1 h-24 overflow-x-auto"></div>
+    <div id="barLabels" class="flex gap-1 mt-1 text-xs text-slate-500 overflow-x-auto"></div>
+  </div>
+</div>
+
+<script>
+let N = 100;
+let sieve = []; // 0=unseen,1=prime,2=composite
+let cells = [];
+let currentP = 2;
+let currentMultiple = 0;
+let flashQueue = [];
+let running = false;
+let animTimeout = null;
+let primes = [];
+let twinPrimes = [];
+
+function getSpeed() { return parseInt(document.getElementById('speedSelect').value); }
+
+function initSieve() {
+  running = false;
+  clearTimeout(animTimeout);
+  document.getElementById('playBtn').textContent = 'Play';
+  document.getElementById('playBtn').className = 'bg-green-700 hover:bg-green-600 text-sm rounded-lg px-4 py-1.5 transition';
+
+  const raw = document.getElementById('limitInput').value;
+  N = Math.max(10, Math.min(500, parseInt(raw) || 100));
+  document.getElementById('limitInput').value = N;
+
+  sieve = new Array(N + 1).fill(0); // 0=unseen
+  sieve[0] = 2; sieve[1] = 2; // 0 and 1 are not prime → mark as composite
+  primes = [];
+  twinPrimes = [];
+  currentP = 2;
+  currentMultiple = 0;
+  flashQueue = [];
+
+  renderGrid();
+  updateStats();
+  updateBarChart();
+  document.getElementById('funFacts').innerHTML = '';
+  document.getElementById('currentPrime').textContent = '—';
+}
+
+function renderGrid() {
+  const cont = document.getElementById('grid');
+  cont.innerHTML = '';
+  const total = N - 1; // 2..N
+  // Responsive columns based on N
+  const cols = N <= 100 ? 10 : N <= 200 ? 20 : 25;
+  const gridDiv = document.createElement('div');
+  gridDiv.style.display = 'grid';
+  gridDiv.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  gridDiv.style.gap = '2px';
+
+  cells = [];
+  for (let n = 2; n <= N; n++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell cell-unseen';
+    cell.setAttribute('aria-label', `Number ${n}`);
+    const txt = document.createElement('span');
+    txt.textContent = n;
+    cell.appendChild(txt);
+    cells[n] = cell;
+    gridDiv.appendChild(cell);
+  }
+  cells[1] = null;
+  cont.appendChild(gridDiv);
+}
+
+function setCellState(n, state) {
+  if (!cells[n]) return;
+  const c = cells[n];
+  c.className = 'cell';
+  if (state === 'prime') c.classList.add('cell-prime');
+  else if (state === 'composite') c.classList.add('cell-composite');
+  else if (state === 'active') c.classList.add('cell-active');
+  else if (state === 'flash') c.classList.add('cell-flash');
+  else if (state === 'neutral') c.classList.add('cell-neutral');
+  else c.classList.add('cell-unseen');
+}
+
+function togglePlay() {
+  running = !running;
+  document.getElementById('playBtn').textContent = running ? 'Pause' : 'Play';
+  document.getElementById('playBtn').className = running
+    ? 'bg-yellow-700 hover:bg-yellow-600 text-sm rounded-lg px-4 py-1.5 transition'
+    : 'bg-green-700 hover:bg-green-600 text-sm rounded-lg px-4 py-1.5 transition';
+  if (running) runLoop();
+}
+
+function runLoop() {
+  if (!running) return;
+  stepSieve();
+  if (currentP > Math.sqrt(N)) {
+    // Mark remaining unseen as prime
+    finalizeAllPrimes();
+    running = false;
+    document.getElementById('playBtn').textContent = 'Done';
+    document.getElementById('playBtn').className = 'bg-slate-600 text-sm rounded-lg px-4 py-1.5';
+    return;
+  }
+  animTimeout = setTimeout(runLoop, getSpeed());
+}
+
+function stepSieve() {
+  // Find next unmarked number as prime
+  if (currentP > Math.sqrt(N)) {
+    finalizeAllPrimes();
+    return;
+  }
+
+  // Find actual next prime p
+  while (currentP <= N && sieve[currentP] === 2) currentP++;
+  if (currentP > N) { finalizeAllPrimes(); return; }
+
+  const p = currentP;
+
+  // Mark p as prime
+  if (sieve[p] === 0) {
+    sieve[p] = 1;
+    setCellState(p, 'active');
+    primes.push(p);
+    // Check twin prime
+    if (primes.length > 1 && p - primes[primes.length - 2] === 2) {
+      twinPrimes.push([primes[primes.length - 2], p]);
+      addFact(`Twin prime found: (${primes[primes.length - 2]}, ${p})`);
+    }
+    updateStats();
+  }
+
+  // Cross off multiples
+  for (let m = p * p; m <= N; m += p) {
+    if (sieve[m] === 0) {
+      sieve[m] = 2; // composite
+      // Flash effect
+      setCellState(m, 'flash');
+      const mm = m;
+      setTimeout(() => { if (cells[mm]) setCellState(mm, 'composite'); }, getSpeed() * 0.4);
+    }
+  }
+
+  document.getElementById('currentPrime').textContent = p;
+  updateBarChart();
+
+  // Advance to next
+  currentP++;
+  while (currentP <= N && sieve[currentP] === 2) currentP++;
+}
+
+function finalizeAllPrimes() {
+  for (let n = 2; n <= N; n++) {
+    if (sieve[n] === 0) { sieve[n] = 1; primes.push(n); setCellState(n, 'prime'); }
+    else if (sieve[n] === 1) setCellState(n, 'prime');
+    else setCellState(n, 'composite');
+  }
+  setCellState(1, 'neutral');
+  updateStats();
+  updateBarChart();
+}
+
+function updateStats() {
+  const found = primes.length;
+  document.getElementById('primeCount').textContent = found;
+  document.getElementById('density').textContent = found > 0 ? ((found / (N - 1)) * 100).toFixed(1) + '%' : '0%';
+  if (primes.length > 1) {
+    let maxGap = 0;
+    for (let i = 1; i < primes.length; i++) maxGap = Math.max(maxGap, primes[i] - primes[i - 1]);
+    document.getElementById('largestGap').textContent = maxGap;
+  } else {
+    document.getElementById('largestGap').textContent = '—';
+  }
+}
+
+function addFact(text) {
+  const cont = document.getElementById('funFacts');
+  const span = document.createElement('div');
+  span.className = 'text-xs text-purple-300';
+  span.textContent = '★ ' + text;
+  cont.prepend(span);
+  // Keep max 5 facts
+  while (cont.children.length > 5) cont.removeChild(cont.lastChild);
+}
+
+function updateBarChart() {
+  const chart = document.getElementById('barChart');
+  const labels = document.getElementById('barLabels');
+  chart.innerHTML = '';
+  labels.innerHTML = '';
+
+  const decades = [];
+  for (let d = 2; d <= N; d += 10) {
+    const lo = d, hi = Math.min(d + 9, N);
+    let cnt = 0;
+    for (let n = lo; n <= hi; n++) if (sieve[n] === 1) cnt++;
+    decades.push({ lo, hi, cnt });
+  }
+  const maxCnt = Math.max(...decades.map(d => d.cnt), 1);
+
+  decades.forEach(({ lo, hi, cnt }) => {
+    const bar = document.createElement('div');
+    bar.className = 'flex-1 min-w-8 bg-amber-500 rounded-t transition-all';
+    bar.style.height = `${(cnt / maxCnt) * 88}px`;
+    bar.title = `${lo}-${hi}: ${cnt} primes`;
+    bar.setAttribute('aria-label', `${lo} to ${hi}: ${cnt} primes`);
+    const lbl = document.createElement('div');
+    lbl.className = 'flex-1 min-w-8 text-center';
+    lbl.textContent = lo;
+    chart.appendChild(bar);
+    labels.appendChild(lbl);
+  });
+}
+
+// Init on load
+initSieve();
+</script>
+</body>
+</html>
